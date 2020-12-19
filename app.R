@@ -12,17 +12,17 @@ library(BSgenome.Hsapiens.UCSC.hg38, lib.loc=paste0(getwd(), "/rlib"))
 # define available chains
 chains <- data.frame(rbind(
   c(org  ="human",
-    from ="hg19",
-    to   ="hg38",
+    old  ="hg19",
+    new  ="hg38",
     chain="hg19ToHg38.over.chain",
-    bsgenomefrom="BSgenome.Hsapiens.UCSC.hg19",
-    bsgenometo  ="BSgenome.Hsapiens.UCSC.hg38"),
+    bsgenome.old="BSgenome.Hsapiens.UCSC.hg19",
+    bsgenome.new="BSgenome.Hsapiens.UCSC.hg38"),
   c(org  ="human",
-    from ="hg38",
-    to   ="hg19",
+    old  ="hg38",
+    new  ="hg19",
     chain="hg38ToHg19.over.chain",
-    bsgenomefrom="BSgenome.Hsapiens.UCSC.hg38",
-    bsgenometo  ="BSgenome.Hsapiens.UCSC.hg19")
+    bsgenome.old="BSgenome.Hsapiens.UCSC.hg38",
+    bsgenome.new="BSgenome.Hsapiens.UCSC.hg19")
 ))
 
 # define available formats
@@ -46,8 +46,8 @@ ui <- dashboardPage(
                  hr(),
                  fluidRow(
                    column(4, selectInput("org", "Organism:", "")),
-                   column(4, selectInput("from", "From:", "")),
-                   column(4, selectInput("to", "To:", ""))
+                   column(4, selectInput("old", "Original assembly:", "")),
+                   column(4, selectInput("new", "New assembly:", ""))
                  ),
                  hr(),
                  fluidRow(
@@ -82,50 +82,51 @@ server <- function(input, output, session) {
     updateSelectInput(session, "org", choices=x, selected=x[1])
   })
   observe({
-    x <- unique(chains$from[chains$org == input$org])
-    updateSelectInput(session, "from", choices=x, selected=x[1])
+    x <- unique(chains$old[chains$org == input$org])
+    updateSelectInput(session, "old", choices=x, selected=x[1])
   })
   observe({
-    x <- unique(chains$to[chains$org == input$org & chains$from == input$from])
-    updateSelectInput(session, "to", choices=x, selected=x[1])
+    x <- unique(chains$new[chains$org == input$org & chains$old == input$old])
+    updateSelectInput(session, "new", choices=x, selected=x[1])
   })
   
-  trackConverted <- reactive({
+  # convert track to new assembly
+  track.new <- reactive({
     input$convert
     
     isolate({
-      req(track())
+      req(track.old())
       withProgress(message = "Lifting over", value = 0, {
-        i <- chains$org == input$org & chains$from == input$from & chains$to == input$to
+        i <- chains$org == input$org & chains$old == input$old & chains$new == input$new
 
         # load bsgenome info about the to/from genomes
-        genomefrom <- eval(parse(text=paste0(chains$bsgenomefrom[i], "::", chains$bsgenomefrom[i])))
-        genometo   <- eval(parse(text=paste0(chains$bsgenometo[i], "::", chains$bsgenometo[i])))
+        genome.old <- eval(parse(text=paste0(chains$bsgenome.old[i], "::", chains$bsgenome.old[i])))
+        genome.new <- eval(parse(text=paste0(chains$bsgenome.new[i], "::", chains$bsgenome.new[i])))
         
-        # add genome info tofrom track
-        xfrom <- track()
-        seqlevelsStyle(xfrom) <- "UCSC"
-        seqlevels(xfrom) <- seqlevels(genomefrom)
-        seqinfo(xfrom)   <- seqinfo(genomefrom)
+        # add genome info to/from track
+        x.old <- track.old()
+        seqlevelsStyle(x.old) <- "UCSC"
+        seqlevels(x.old) <- seqlevels(genome.old)
+        seqinfo(x.old)   <- seqinfo(genome.old)
         
         # convert
-        xto <- unlist(liftOver(xfrom, rtracklayer::import.chain(as.character(chains$chain[i]))))
-        seqlevels(xto) <- seqlevels(genometo)
-        seqinfo(xto)   <- seqinfo(genometo)
+        x.new <- unlist(liftOver(x.old, rtracklayer::import.chain(as.character(chains$chain[i]))))
+        seqlevels(x.new) <- seqlevels(genome.new)
+        seqinfo(x.new)   <- seqinfo(genome.new)
         
         # drop the overlapping ranges
-        hits <- findOverlaps(xto, drop.self=TRUE)
-        xto <- xto[-queryHits(hits)]
-        if("score" %in% colnames(xto)) {
-          xto <- xto[!is.na(xto$score)] 
+        hits <- findOverlaps(x.new, drop.self=TRUE)
+        x.new <- x.new[-queryHits(hits)]
+        if("score" %in% colnames(x.new)) {
+          x.new <- x.new[!is.na(x.new$score)] 
         }
-        xto
+        x.new
       })
     })
   })
   
   # upload input
-  track <- reactive({
+  track.old <- reactive({
     req(input$file1)
     tryCatch( {
       rtracklayer::import(input$file1$datapath)  # in principle, rtracklayer will detect the format automatically
@@ -138,22 +139,22 @@ server <- function(input, output, session) {
   # download
   output$downloadData <- downloadHandler(
     filename = function() {
-      paste0(sub("\\..+", "", input$file1$name), "_", input$to, formats[[input$format]]["ext"])
+      paste0(sub("\\..+", "", input$file1$name), "_", input$new, formats[[input$format]]["ext"])
     },
     content = function(file) {
-      do.call(formats[[input$format]]["fun"], list(trackConverted(), file))
+      do.call(formats[[input$format]]["fun"], list(track.new(), file))
     }
   )
   
   # previews
   output$previewInput <- renderPrint({
-    req(track())
-    print(track())
+    req(track.old())
+    print(track.old())
   })
   
   output$previewOutput <- renderPrint({
-    req(trackConverted())
-    print(trackConverted())
+    req(track.new())
+    print(track.new())
   })
 }
 
