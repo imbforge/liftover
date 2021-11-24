@@ -1,12 +1,12 @@
-options(stringsAsFactors = FALSE)
+options(stringsAsFactors=FALSE)
 library(shiny)
+library(shinyjs)
 library(shinydashboard)
 ## NOTE: this will go away once the Rstudio-Shiny container is fixed
 library(rtracklayer, lib.loc=paste0(getwd(), "/rlib"))
 library(BSgenome, lib.loc=paste0(getwd(), "/rlib"))
 library(BSgenome.Hsapiens.UCSC.hg19, lib.loc=paste0(getwd(), "/rlib"))
 library(BSgenome.Hsapiens.UCSC.hg38, lib.loc=paste0(getwd(), "/rlib"))
-#library(rtracklayer)
 ## END NOTE
 
 # define available chains
@@ -37,13 +37,15 @@ ui <- dashboardPage(
   dashboardHeader(title="liftOver coordinates", titleWidth=300),
   dashboardSidebar(disable=TRUE),
   dashboardBody(
+    useShinyjs(),
     fluidRow(
       column(6,
              box(width=NULL, title="", status="warning",
                  fileInput("file1", "Choose track file",
-                           multiple = FALSE,
-                           accept = c(".gff", ".bed", "bedpe", "bedGraph", ".bw", ".wig")),
+                           multiple=FALSE,
+                           accept=c(".gff", ".bed", "bedpe", "bedGraph", ".bw", ".wig")),
                  hr(),
+                 checkboxInput("liftover", "Lift over", value=TRUE),
                  fluidRow(
                    column(4, selectInput("org", "Organism:", "")),
                    column(4, selectInput("old", "Original assembly:", "")),
@@ -51,14 +53,18 @@ ui <- dashboardPage(
                  ),
                  hr(),
                  fluidRow(
-                   column(8, selectInput("format", "Output format:", names(formats))),
-                   column(4, actionButton("convert", label = "Convert!"))
+                   column(6, selectInput("format", "Output format:", names(formats))),
+                   column(3, actionButton("clear", label="Clear")),
+                   column(3, actionButton("convert", label="Convert!"))
                  )
              )
       ),
       column(6,
         box(width=NULL, title="", status="warning",
-          downloadButton("downloadData", "Download converted file"),
+          fluidRow(
+            column(4, downloadButton("downloadData", "Download converted file")),
+            column(8, verbatimTextOutput("downloadMsg"))
+          ),
           hr(),
           tags$b("Input coordinates:"),
           verbatimTextOutput("previewInput"),
@@ -76,6 +82,13 @@ server <- function(input, output, session) {
   
   session$onSessionEnded(stopApp)
   
+  # enable chains if user wants to liftover
+  observe({
+    toggleState("org", input$liftover)
+    toggleState("old", input$liftover)
+    toggleState("new", input$liftover)
+  })
+  
   # update available chains depending on the organism selected
   observe({
     x <- unique(chains$org)
@@ -91,57 +104,85 @@ server <- function(input, output, session) {
   })
   
   # convert track to new assembly
-  track.new <- reactive({
-    input$convert
-    
+  track.new <- reactiveVal(NULL)
+  observeEvent(input$convert, {
     isolate({
       req(track.old())
-      withProgress(message = "Lifting over", value = 0, {
-        i <- chains$org == input$org & chains$old == input$old & chains$new == input$new
-
-        # load bsgenome info about the to/from genomes
-        genome.old <- eval(parse(text=paste0(chains$bsgenome.old[i], "::", chains$bsgenome.old[i])))
-        genome.new <- eval(parse(text=paste0(chains$bsgenome.new[i], "::", chains$bsgenome.new[i])))
-        
-        # add genome info to/from track
-        x.old <- track.old()
-        seqlevelsStyle(x.old) <- "UCSC"
-        seqlevels(x.old) <- seqlevels(genome.old)
-        seqinfo(x.old)   <- seqinfo(genome.old)
-        
-        # convert
-        x.new <- unlist(liftOver(x.old, rtracklayer::import.chain(as.character(chains$chain[i]))))
-        seqlevels(x.new) <- seqlevels(genome.new)
-        seqinfo(x.new)   <- seqinfo(genome.new)
-        
-        # drop the overlapping ranges
-        hits <- findOverlaps(x.new, drop.self=TRUE)
-        x.new <- x.new[-queryHits(hits)]
-        if("score" %in% colnames(x.new)) {
-          x.new <- x.new[!is.na(x.new$score)] 
-        }
-        x.new
-      })
+      if(input$liftover) {
+        withProgress(message="Lifting over", value=0, {
+          i <- chains$org == input$org & chains$old == input$old & chains$new == input$new
+  
+          # load bsgenome info about the to/from genomes
+          genome.old <- eval(parse(text=paste0(chains$bsgenome.old[i], "::", chains$bsgenome.old[i])))
+          genome.new <- eval(parse(text=paste0(chains$bsgenome.new[i], "::", chains$bsgenome.new[i])))
+          
+          # add genome info to/from track
+          x.old <- track.old()
+          seqlevelsStyle(x.old) <- "UCSC"
+          seqlevels(x.old) <- seqlevels(genome.old)
+          seqinfo(x.old)   <- seqinfo(genome.old)
+          
+          # convert
+          x.new <- unlist(liftOver(x.old, rtracklayer::import.chain(as.character(chains$chain[i]))))
+          seqlevels(x.new) <- seqlevels(genome.new)
+          seqinfo(x.new)   <- seqinfo(genome.new)
+          
+          # drop the overlapping ranges
+          hits <- findOverlaps(x.new, drop.self=TRUE)
+          if(length(hits) > 0) {
+            x.new <- x.new[-queryHits(hits)]
+          }
+          if("score" %in% colnames(x.new)) {
+            x.new <- x.new[!is.na(x.new$score)] 
+          }
+        })
+      } else {
+        withProgress(message="Converting", value=0, {
+          x.new <- track.old()
+          
+          # drop the overlapping ranges
+          hits <- findOverlaps(x.new, drop.self=TRUE)
+          if(length(hits) > 0) {
+            x.new <- x.new[-queryHits(hits)]
+          }
+          if("score" %in% colnames(x.new)) {
+            x.new <- x.new[!is.na(x.new$score)] 
+          }
+        })
+      }
+      track.new(x.new)
     })
   })
   
   # upload input
-  track.old <- reactive({
+  track.old <- reactiveVal(NULL)
+  observe({
     req(input$file1)
     tryCatch( {
-      rtracklayer::import(input$file1$datapath)  # in principle, rtracklayer will detect the format automatically
+      track.old(rtracklayer::import(input$file1$datapath))  # in principle, rtracklayer will detect the format automatically
     },
-    error = function(e) {
+    error=function(e) {
       stop(safeError(e))
     })
   })
   
+  # clear control
+  observeEvent(input$clear, {
+    track.old(NULL)
+    track.new(NULL)
+  })
+  
   # download
   output$downloadData <- downloadHandler(
-    filename = function() {
-      paste0(sub("\\..+", "", input$file1$name), "_", input$new, formats[[input$format]]["ext"])
+    filename=function() {
+      if(input$liftover) {
+        paste0(sub("\\..+", "", input$file1$name), "_", input$new, formats[[input$format]]["ext"])
+      } else {
+        paste0(sub("\\..+", "", input$file1$name), formats[[input$format]]["ext"])
+      }
     },
-    content = function(file) {
+    content=function(file) {
+      req(track.new())
       do.call(formats[[input$format]]["fun"], list(track.new(), file))
     }
   )
@@ -159,4 +200,4 @@ server <- function(input, output, session) {
 }
 
 # Run the application 
-shinyApp(ui = ui, server = server)
+shinyApp(ui=ui, server=server)
