@@ -1,4 +1,5 @@
 options(stringsAsFactors=FALSE)
+options(shiny.maxRequestSize=100*1024^2)
 library(shiny)
 library(shinyjs)
 library(shinydashboard)
