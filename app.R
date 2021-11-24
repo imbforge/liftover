@@ -1,14 +1,13 @@
 options(stringsAsFactors=FALSE)
 options(shiny.maxRequestSize=100*1024^2)
+## NOTE: library folder is "./rlib/4.0" (check .Rprofile)
 library(shiny)
 library(shinyjs)
 library(shinydashboard)
-## NOTE: this will go away once the Rstudio-Shiny container is fixed
-library(rtracklayer, lib.loc=paste0(getwd(), "/rlib"))
-library(BSgenome, lib.loc=paste0(getwd(), "/rlib"))
-library(BSgenome.Hsapiens.UCSC.hg19, lib.loc=paste0(getwd(), "/rlib"))
-library(BSgenome.Hsapiens.UCSC.hg38, lib.loc=paste0(getwd(), "/rlib"))
-## END NOTE
+library(rtracklayer)
+library(BSgenome)
+library(BSgenome.Hsapiens.UCSC.hg19)
+library(BSgenome.Hsapiens.UCSC.hg38)
 
 # define available chains
 chains <- data.frame(rbind(
